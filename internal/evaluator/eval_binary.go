@@ -90,11 +90,7 @@ func evalBinary(node *parser.Node, input any, env *Environment) (any, error) { /
 		op := node.Value
 		if left != nil {
 			if _, ok := ToFloat64(left); !ok {
-				code := "T2001"
-				if IsNull(left) {
-					code = "T2002"
-				}
-				return nil, &JSONataError{Code: code, Message: fmt.Sprintf("the left operand of the %q operator must evaluate to a number", op)}
+				return nil, &JSONataError{Code: "T2001", Message: fmt.Sprintf("the left operand of the %q operator must evaluate to a number", op)}
 			}
 		}
 		if left == nil {
@@ -102,11 +98,7 @@ func evalBinary(node *parser.Node, input any, env *Environment) (any, error) { /
 		}
 		if right != nil {
 			if _, ok := ToFloat64(right); !ok {
-				code := "T2001"
-				if IsNull(right) {
-					code = "T2002"
-				}
-				return nil, &JSONataError{Code: code, Message: fmt.Sprintf("the right operand of the %q operator must evaluate to a number", op)}
+				return nil, &JSONataError{Code: "T2002", Message: fmt.Sprintf("the right operand of the %q operator must evaluate to a number", op)}
 			}
 		}
 		if right == nil {

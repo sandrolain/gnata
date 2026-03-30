@@ -159,7 +159,7 @@ func fnDecodeURL(args []any, _ any) (any, error) {
 	}
 	decoded, err := url.PathUnescape(s)
 	if err != nil {
-		return nil, &evaluator.JSONataError{Code: "D3137", Message: fmt.Sprintf("$decodeUrl: %v", err)}
+		return nil, &evaluator.JSONataError{Code: "D3140", Message: fmt.Sprintf("Malformed URL passed to $decodeUrl(): %q", s)}
 	}
 	return decoded, nil
 }
@@ -174,7 +174,7 @@ func fnDecodeURLComponent(args []any, _ any) (any, error) {
 	}
 	decoded, err := url.PathUnescape(s)
 	if err != nil {
-		return nil, &evaluator.JSONataError{Code: "D3137", Message: fmt.Sprintf("$decodeUrlComponent: %v", err)}
+		return nil, &evaluator.JSONataError{Code: "D3140", Message: fmt.Sprintf("Malformed URL passed to $decodeUrlComponent(): %q", s)}
 	}
 	return decoded, nil
 }
