@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/recolabs/gnata"
 )
@@ -160,11 +161,28 @@ func runTestCase(t *testing.T, tc *testCase) {
 		inputData = tc.Data
 	}
 
+	// Determine expected error code and token from both formats:
+	//   Format A: top-level "code" / "token" fields
+	//   Format B: nested "error": { "code": "...", "token": "..." } object
+	wantCode := tc.Code
+	wantToken := tc.Token
+	if tc.Error != nil {
+		if c, ok := tc.Error["code"].(string); ok && wantCode == "" {
+			wantCode = c
+		}
+		if tok, ok := tc.Error["token"].(string); ok && wantToken == "" {
+			wantToken = tok
+		}
+	}
+
 	expr, err := gnata.Compile(tc.Expr)
 	if err != nil {
-		if tc.Code != "" {
-			if !strings.Contains(err.Error(), tc.Code) {
-				t.Errorf("compile error code: want %s, got %v", tc.Code, err)
+		if wantCode != "" {
+			if !strings.Contains(err.Error(), wantCode) {
+				t.Errorf("compile error code: want %s, got %v", wantCode, err)
+			}
+			if wantToken != "" && !strings.Contains(err.Error(), wantToken) {
+				t.Errorf("compile error token: want %q in error, got %v", wantToken, err)
 			}
 			return
 		}
@@ -175,13 +193,24 @@ func runTestCase(t *testing.T, tc *testCase) {
 		return
 	}
 
-	result, err := expr.EvalWithVars(context.Background(), inputData, tc.Bindings)
-	if tc.Code != "" || tc.Error != nil {
+	// Set up context with optional timelimit enforcement.
+	ctx := context.Background()
+	if tc.TimeLimit > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(tc.TimeLimit)*time.Millisecond)
+		defer cancel()
+	}
+
+	result, err := expr.EvalWithVars(ctx, inputData, tc.Bindings)
+	if wantCode != "" || tc.Error != nil {
 		if err == nil {
-			t.Fatalf("expected error %s, got result %v", tc.Code, result)
+			t.Fatalf("expected error %s, got result %v", wantCode, result)
 		}
-		if tc.Code != "" && !strings.Contains(err.Error(), tc.Code) {
-			t.Errorf("error code: want %s, got %v", tc.Code, err)
+		if wantCode != "" && !strings.Contains(err.Error(), wantCode) {
+			t.Errorf("error code: want %s, got %v", wantCode, err)
+		}
+		if wantToken != "" && !strings.Contains(err.Error(), wantToken) {
+			t.Errorf("error token: want %q in error, got %v", wantToken, err)
 		}
 		return
 	}
