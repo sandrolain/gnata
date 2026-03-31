@@ -261,26 +261,23 @@ func evalComparison(
 	c *parser.ComparisonFastPath, data json.RawMessage, mapData map[string]json.RawMessage,
 ) (result any, handled bool, err error) {
 	lhs := resolveGjsonPath(data, mapData, c.LHSPath)
+	return evalComparisonResult(c, &lhs)
+}
+
+// evalComparisonResult evaluates a comparison against a pre-resolved gjson.Result.
+func evalComparisonResult(c *parser.ComparisonFastPath, lhs *gjson.Result) (result any, handled bool, err error) {
 	if !lhs.Exists() {
-		// gjson couldn't resolve the path. This could be because the path is
-		// truly undefined OR because an intermediate element is a JSON array
-		// (gjson doesn't auto-map through arrays, but JSONata does).
-		// Fall back to the full evaluator which handles both cases correctly.
 		return nil, false, nil
 	}
 
 	if lhs.Type == gjson.JSON {
 		raw := lhs.Raw
 		if raw != "" && raw[0] == '[' {
-			// JSON array: JSONata auto-maps comparisons element-wise.
-			// For null checks we can safely short-circuit (arrays are never null).
 			if c.RHSKind == parser.RHSKindNull {
 				return c.Op == "!=", true, nil
 			}
-			// For all other comparisons, fall back to the full evaluator.
 			return nil, false, nil
 		}
-		// JSON object: never equal to any primitive literal.
 		return c.Op == "!=", true, nil
 	}
 
