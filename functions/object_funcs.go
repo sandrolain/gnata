@@ -158,20 +158,40 @@ func fnMerge(args []any, _ any) (any, error) {
 	return result, nil
 }
 
-func siftArgs(fn, value any, key string, obj any) []any {
+// siftArity returns the callback arity for $sift / object-iteration HOFs.
+func siftArity(fn any) int {
 	if lambda, ok := fn.(*evaluator.Lambda); ok {
-		switch len(lambda.Params) {
-		case 0:
-			return []any{}
-		case 1:
-			return []any{value}
-		case 2:
-			return []any{value, key}
-		default:
-			return []any{value, key, obj}
+		n := len(lambda.Params)
+		if n > 3 {
+			return 3
 		}
+		return n
 	}
-	return []any{value}
+	return 1
+}
+
+// siftArgsBuf allocates a reusable buffer for sift-style HOF callbacks.
+func siftArgsBuf(arity int) []any {
+	if arity == 0 {
+		return nil
+	}
+	return make([]any, arity)
+}
+
+// fillSiftArgs populates a pre-allocated argument buffer for $sift callbacks.
+func fillSiftArgs(buf []any, value any, key string, obj any) {
+	switch len(buf) {
+	case 0:
+	case 1:
+		buf[0] = value
+	case 2:
+		buf[0] = value
+		buf[1] = key
+	default:
+		buf[0] = value
+		buf[1] = key
+		buf[2] = obj
+	}
 }
 
 // ── $sift ─────────────────────────────────────────────────────────────────────
@@ -199,9 +219,10 @@ func makeFnSift(evalFn EvalFn) evaluator.EnvAwareBuiltin {
 
 		result := evaluator.NewOrderedMap()
 		keys := evaluator.MapKeys(objVal)
+		callArgs := siftArgsBuf(siftArity(fn))
 		for _, ks := range keys {
 			val, _ := evaluator.MapGet(objVal, ks)
-			callArgs := siftArgs(fn, val, ks, objVal)
+			fillSiftArgs(callArgs, val, ks, objVal)
 			res, err := evalFn(fn, callArgs, focus, env)
 			if err != nil {
 				return nil, err
@@ -242,9 +263,11 @@ func makeFnEach(evalFn EvalFn) evaluator.EnvAwareBuiltin {
 
 		keys := evaluator.MapKeys(objVal)
 		seq := evaluator.CreateSequence()
+		callArgs := siftArgsBuf(siftArity(fn))
 		for _, ks := range keys {
 			val, _ := evaluator.MapGet(objVal, ks)
-			res, err := evalFn(fn, []any{val, ks}, focus, env)
+			fillSiftArgs(callArgs, val, ks, objVal)
+			res, err := evalFn(fn, callArgs, focus, env)
 			if err != nil {
 				return nil, err
 			}
