@@ -50,7 +50,7 @@ func IsSequence(v any) bool {
 // CollapseSequence applies JSONata singleton-collapsing rules:
 //   - len 0 → nil (undefined)
 //   - len 1 → elem[0] unless KeepSingleton
-//   - len > 1 → []any(seq.Values)
+//   - len > 1 → []any(seq.Values) — ownership transfer, callers must not mutate
 func CollapseSequence(s *Sequence) any {
 	switch len(s.Values) {
 	case 0:
@@ -61,7 +61,7 @@ func CollapseSequence(s *Sequence) any {
 		}
 		return s.Values[0]
 	default:
-		return slices.Clone(s.Values)
+		return ([]any)(s.Values)
 	}
 }
 
