@@ -113,9 +113,9 @@ func NewStreamEvaluator(expressions []*Expression, opts ...StreamOption) *Stream
 // The index is guaranteed to be stable: once assigned it will not change even as more
 // expressions are added. Pass this index to EvalMany / EvalOne.
 //
-// Add is safe to call concurrently with EvalMany. It invalidates the schema plan cache
-// so that subsequent EvalMany calls rebuild GroupPlans with correct fast-path metadata
-// for the new expression.
+// Add is safe to call concurrently with EvalMany. Existing cached GroupPlans remain
+// valid because they are keyed by exprIndices — the new expression's index won't
+// appear in any cached plan until the caller includes it in a future EvalMany call.
 func (se *StreamEvaluator) Add(expr *Expression) int {
 	se.mu.Lock()
 	defer se.mu.Unlock()
@@ -127,9 +127,6 @@ func (se *StreamEvaluator) Add(expr *Expression) int {
 	newExprs[idx] = expr
 	se.exprs.Store(&newExprs)
 
-	// Invalidate cached plans so new EvalMany calls rebuild them with the
-	// new expression's fast-path metadata included.
-	se.cache.Invalidate()
 	return idx
 }
 
@@ -172,7 +169,10 @@ func (se *StreamEvaluator) Replace(idx int, expr *Expression) error {
 
 // Remove marks the expression at the given index as removed. Removed indices
 // return nil from EvalMany/EvalOne. The index is NOT reused — subsequent Add
-// calls still append to the end. Remove invalidates the schema plan cache.
+// calls still append to the end.
+//
+// Existing cached GroupPlans remain valid because evalSingleExpr checks
+// for nil expressions before using plan metadata.
 //
 // Safe to call concurrently with EvalMany.
 func (se *StreamEvaluator) Remove(idx int) error {
@@ -187,7 +187,6 @@ func (se *StreamEvaluator) Remove(idx int) error {
 	copy(newExprs, old)
 	newExprs[idx] = nil
 	se.exprs.Store(&newExprs)
-	se.cache.Invalidate()
 	return nil
 }
 
