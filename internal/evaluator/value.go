@@ -189,6 +189,21 @@ func normalizeNumber(v any) any {
 
 // DeepEqual implements JSONata structural equality.
 func DeepEqual(a, b any) bool {
+	// Fast path: when both values are the same primitive type (the common case
+	// in Eval path where numbers are already float64), skip normalizeNumber.
+	switch av := a.(type) {
+	case float64:
+		if bv, ok := b.(float64); ok {
+			return av == bv
+		}
+	case string:
+		bv, ok := b.(string)
+		return ok && av == bv
+	case bool:
+		bv, ok := b.(bool)
+		return ok && av == bv
+	}
+
 	a, b = normalizeNumber(a), normalizeNumber(b)
 	if a == nil || b == nil || IsNull(a) || IsNull(b) {
 		return a == nil && b == nil || IsNull(a) && IsNull(b)
