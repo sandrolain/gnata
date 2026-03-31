@@ -19,8 +19,12 @@ type GroupPlan struct {
 	CmpFast []*parser.ComparisonFastPath
 	// FuncFast[i] is non-nil when expressions[i] is a supported built-in function
 	// call on a pure path (e.g. $exists(a.b), $lowercase(name)).
-	FuncFast []*parser.FuncFastPath
-}
+	FuncFast []*parser.FuncFastPath	// MergedPaths is the deduplicated set of all GJSON paths needed by fast-path
+	// expressions. Used with gjson.GetManyBytes for single-scan batch resolution.
+	MergedPaths []string
+	// ExprPathIdx maps each expression position to its index in MergedPaths,
+	// or -1 if the expression has no fast-path GJSON path.
+	ExprPathIdx []int}
 
 // cacheEntry is one slot in the BoundedCache.
 type cacheEntry struct {

@@ -74,13 +74,16 @@ var funcFastHandlers = map[parser.FuncFastKind]funcFastHandler{
 
 func evalFunc(f *parser.FuncFastPath, data json.RawMessage, mapData map[string]json.RawMessage) (result any, handled bool, err error) {
 	r := resolveGjsonPath(data, mapData, f.Path)
+	return evalFuncResult(f, &r)
+}
+
+// evalFuncResult evaluates a function fast path against a pre-resolved gjson.Result.
+func evalFuncResult(f *parser.FuncFastPath, r *gjson.Result) (result any, handled bool, err error) {
 	if !r.Exists() {
-		// Fall through to full evaluator — gjson doesn't auto-map through
-		// arrays, so the path might still resolve via the AST walker.
 		return nil, false, nil
 	}
 	if h, ok := funcFastHandlers[f.Kind]; ok {
-		return h(&r, f)
+		return h(r, f)
 	}
 	return nil, false, nil
 }

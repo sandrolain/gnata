@@ -11,6 +11,7 @@ import (
 
 	"github.com/recolabs/gnata/internal/evaluator"
 	"github.com/recolabs/gnata/internal/parser"
+	"github.com/tidwall/gjson"
 )
 
 // StreamEvaluator manages compiled expressions for high-throughput streaming evaluation.
@@ -266,6 +267,14 @@ func (se *StreamEvaluator) evalInternal(
 
 	results = make([]any, len(exprIndices))
 	batch := evalBatch{se: se, plan: plan, data: data, mapData: mapData, parsed: preparsed, parseAttempted: preparsed != nil}
+
+	// Batch-resolve all fast-path GJSON paths in a single JSON scan.
+	// Only worthwhile when there are multiple paths to resolve; for 1-2 paths
+	// the per-call gjson.GetBytes is cheaper than the GetManyBytes allocation.
+	if data != nil && plan != nil && len(plan.MergedPaths) >= 3 {
+		batch.preResolved = gjson.GetManyBytes(data, plan.MergedPaths...)
+	}
+
 	for i, idx := range exprIndices {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -297,6 +306,7 @@ type evalBatch struct {
 	parsed         any
 	parsedErr      error
 	parseAttempted bool
+	preResolved    []gjson.Result // batch-resolved GJSON results (nil when mapData or no fast paths)
 }
 
 // evalSingleExpr evaluates one expression, trying fast paths first (pure path,
@@ -319,7 +329,7 @@ func (b *evalBatch) evalSingleExpr(ctx context.Context, i, idx int, expr *Expres
 // or (nil, true, err) on error.
 func (b *evalBatch) tryFastPaths(i, idx int, start time.Time) (result any, done bool, err error) {
 	if b.plan != nil && i < len(b.plan.ExprFastPath) && b.plan.ExprFastPath[i] && b.plan.FastPaths[i] != "" {
-		r := resolveGjsonPath(b.data, b.mapData, b.plan.FastPaths[i])
+		r := b.resolvePathForExpr(i, b.plan.FastPaths[i])
 		if r.Exists() {
 			if b.se.metrics != nil {
 				b.se.metrics.OnEval(idx, true, time.Since(start), nil)
@@ -329,7 +339,8 @@ func (b *evalBatch) tryFastPaths(i, idx int, start time.Time) (result any, done 
 	}
 
 	if b.plan != nil && i < len(b.plan.CmpFast) && b.plan.CmpFast[i] != nil {
-		if result, handled, err := evalComparison(b.plan.CmpFast[i], b.data, b.mapData); err != nil {
+		c := b.plan.CmpFast[i]
+		if result, handled, err := b.evalComparisonBatch(i, c); err != nil {
 			if b.se.metrics != nil {
 				b.se.metrics.OnEval(idx, true, time.Since(start), err)
 			}
@@ -343,7 +354,8 @@ func (b *evalBatch) tryFastPaths(i, idx int, start time.Time) (result any, done 
 	}
 
 	if b.plan != nil && i < len(b.plan.FuncFast) && b.plan.FuncFast[i] != nil {
-		if result, handled, err := evalFunc(b.plan.FuncFast[i], b.data, b.mapData); err != nil {
+		f := b.plan.FuncFast[i]
+		if result, handled, err := b.evalFuncBatch(i, f); err != nil {
 			if b.se.metrics != nil {
 				b.se.metrics.OnEval(idx, true, time.Since(start), err)
 			}
@@ -357,6 +369,39 @@ func (b *evalBatch) tryFastPaths(i, idx int, start time.Time) (result any, done 
 	}
 
 	return nil, false, nil
+}
+
+// resolvePathForExpr returns the pre-resolved gjson.Result for expression i
+// when batch resolution is available, otherwise falls back to per-call resolution.
+func (b *evalBatch) resolvePathForExpr(i int, fallbackPath string) gjson.Result {
+	if b.preResolved != nil && b.plan.ExprPathIdx != nil && i < len(b.plan.ExprPathIdx) {
+		if pi := b.plan.ExprPathIdx[i]; pi >= 0 && pi < len(b.preResolved) {
+			return b.preResolved[pi]
+		}
+	}
+	return resolveGjsonPath(b.data, b.mapData, fallbackPath)
+}
+
+// evalComparisonBatch evaluates a comparison fast path using pre-resolved results
+// when available, falling back to the standard evalComparison path.
+func (b *evalBatch) evalComparisonBatch(i int, c *parser.ComparisonFastPath) (any, bool, error) {
+	if b.preResolved != nil && b.plan.ExprPathIdx != nil && i < len(b.plan.ExprPathIdx) {
+		if pi := b.plan.ExprPathIdx[i]; pi >= 0 && pi < len(b.preResolved) {
+			return evalComparisonResult(c, &b.preResolved[pi])
+		}
+	}
+	return evalComparison(c, b.data, b.mapData)
+}
+
+// evalFuncBatch evaluates a function fast path using pre-resolved results
+// when available, falling back to the standard evalFunc path.
+func (b *evalBatch) evalFuncBatch(i int, f *parser.FuncFastPath) (any, bool, error) {
+	if b.preResolved != nil && b.plan.ExprPathIdx != nil && i < len(b.plan.ExprPathIdx) {
+		if pi := b.plan.ExprPathIdx[i]; pi >= 0 && pi < len(b.preResolved) {
+			return evalFuncResult(f, &b.preResolved[pi])
+		}
+	}
+	return evalFunc(f, b.data, b.mapData)
 }
 
 // fullEval performs full AST evaluation, lazily parsing JSON on first use.
@@ -425,8 +470,13 @@ func buildPlan(expressions []*Expression, exprIndices []int) *GroupPlan {
 		ExprFastPath: make([]bool, len(exprIndices)),
 		CmpFast:      make([]*parser.ComparisonFastPath, len(exprIndices)),
 		FuncFast:     make([]*parser.FuncFastPath, len(exprIndices)),
+		ExprPathIdx:  make([]int, len(exprIndices)),
+	}
+	for i := range plan.ExprPathIdx {
+		plan.ExprPathIdx[i] = -1
 	}
 	hasPure, hasCmp, hasFunc := false, false, false
+	pathMap := make(map[string]int) // path → index in MergedPaths
 	for i, idx := range exprIndices {
 		if idx < 0 || idx >= len(expressions) {
 			continue
@@ -435,17 +485,31 @@ func buildPlan(expressions []*Expression, exprIndices []int) *GroupPlan {
 		if expr == nil {
 			continue
 		}
+		var gjsonPath string
 		switch {
 		case expr.fastPath && len(expr.paths) == 1:
 			plan.ExprFastPath[i] = true
 			plan.FastPaths[i] = expr.paths[0]
 			hasPure = true
+			gjsonPath = expr.paths[0]
 		case expr.cmpFast != nil:
 			plan.CmpFast[i] = expr.cmpFast
 			hasCmp = true
+			gjsonPath = expr.cmpFast.LHSPath
 		case expr.funcFast != nil:
 			plan.FuncFast[i] = expr.funcFast
 			hasFunc = true
+			gjsonPath = expr.funcFast.Path
+		}
+		if gjsonPath != "" {
+			if pi, ok := pathMap[gjsonPath]; ok {
+				plan.ExprPathIdx[i] = pi
+			} else {
+				pi = len(plan.MergedPaths)
+				pathMap[gjsonPath] = pi
+				plan.MergedPaths = append(plan.MergedPaths, gjsonPath)
+				plan.ExprPathIdx[i] = pi
+			}
 		}
 	}
 	if !hasPure {
@@ -457,6 +521,10 @@ func buildPlan(expressions []*Expression, exprIndices []int) *GroupPlan {
 	}
 	if !hasFunc {
 		plan.FuncFast = nil
+	}
+	if len(plan.MergedPaths) == 0 {
+		plan.MergedPaths = nil
+		plan.ExprPathIdx = nil
 	}
 	return plan
 }
