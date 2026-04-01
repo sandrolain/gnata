@@ -191,6 +191,12 @@ func sigTypeMatches(arg any, t byte) bool {
 			return true
 		}
 		return false
+	case 'u': // Boolean, number, string, or null
+		switch arg.(type) {
+		case bool, float64, string, json.Number:
+			return true
+		}
+		return arg == nil
 	}
 	return false
 }

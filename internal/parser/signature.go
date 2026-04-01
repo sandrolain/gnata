@@ -170,7 +170,7 @@ func sigStripReturnType(s string) string {
 
 func isValidSigType(c byte) bool {
 	switch c {
-	case 'b', 'n', 's', 'l', 'a', 'o', 'f', 'j', 'x':
+	case 'b', 'n', 's', 'l', 'a', 'o', 'f', 'j', 'x', 'u':
 		return true
 	}
 	return false
