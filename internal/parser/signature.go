@@ -11,6 +11,7 @@ type ParamSpec struct {
 	ContentType byte   // for 'a': element type constraint; 0 = any
 	Optional    bool   // ? — param may be omitted
 	Variadic    bool   // + — repeats; must be the last spec
+	Context     bool   // - — use the focus (context value) when the argument is missing
 }
 
 // ParseSig parses and validates a raw function-signature string (the content
@@ -53,6 +54,8 @@ func ParseSig(raw string) ([]ParamSpec, error) {
 				spec.Optional = true
 			case '+':
 				spec.Variadic = true
+			case '-':
+				spec.Context = true
 			}
 			i++
 		}
