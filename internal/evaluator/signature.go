@@ -67,10 +67,19 @@ func validateCallArgs(specs []parser.ParamSpec, args []any) error {
 		spec := specs[si]
 
 		if spec.Variadic {
-			// Variadic spec: validate every remaining arg against it.
-			for ai < len(args) {
+			// Variadic spec: consume args up to maxConsume, stopping on type
+			// mismatch (so subsequent mandatory specs can claim the remaining
+			// args). maxConsume leaves room for non-optional specs that follow.
+			mandatoryAfter := 0
+			for k := si + 1; k < len(specs); k++ {
+				if !specs[k].Optional {
+					mandatoryAfter++
+				}
+			}
+			maxConsume := len(args) - mandatoryAfter
+			for ai < maxConsume {
 				if err := validateOneCallArg(spec, args[ai], ai+1); err != nil {
-					return err
+					break // stop on type mismatch; remaining args may match next spec
 				}
 				ai++
 			}
