@@ -246,7 +246,7 @@ func MapKeys(obj any) []string {
 	case *OrderedMap:
 		return m.Keys()
 	case map[string]any:
-		return slices.Collect(maps.Keys(m))
+		return slices.Sorted(maps.Keys(m))
 	}
 	return nil
 }
