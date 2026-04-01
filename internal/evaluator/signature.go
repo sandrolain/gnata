@@ -100,6 +100,12 @@ func validateCallArgs(specs []parser.ParamSpec, args []any) error {
 		}
 
 		if err := validateOneCallArg(spec, args[ai], ai+1); err != nil {
+			if spec.Optional {
+				// Type mismatch on an optional spec: skip the spec and retry
+				// the same argument against the next spec.
+				si++
+				continue
+			}
 			return err
 		}
 		ai++
